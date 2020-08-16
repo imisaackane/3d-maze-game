@@ -1,0 +1,730 @@
+<!-- Assignment 3 Isaac Kane, E01346364 -->
+
+<html>
+
+<head>
+
+<!-- script files for webgl set up and math operations -->
+<script type="text/javascript" src="webgl-utils.js"></script>
+<script type="text/javascript" src="init-shaders.js"></script>
+<script type="text/javascript" src="math.js"></script>
+
+<!-- vertex shader -->
+<script id="vertex-shader" type="x-shader/x-vertex">
+attribute vec4 aPosition;       //vertex coordinate
+attribute vec4 aColor;			//color attribute
+varying vec4 vColor;			//varying color value
+uniform mat4 uModelMatrix;		//uniform model matrix
+uniform mat4 uViewMatrix;		//uniform view matrix
+uniform mat4 uProjectMatrix;	//uniform 
+
+void main()
+{
+	//gets the vertex position after matrix multiplication
+	gl_Position = uProjectMatrix*uViewMatrix*uModelMatrix*aPosition;
+	vColor = aColor;
+}
+</script>
+
+<!-- fragment shader -->
+<script id="fragment-shader" type="x-shader/x-fragment">
+precision mediump float;            //medium float precision
+varying vec4 vColor;				//the varying color
+void main()
+{
+    gl_FragColor = vColor; //fragment color is equal to vColor
+}
+</script>
+
+<script>
+//main drawing function 
+var gl;				//webgl context
+var canvas;					//canvas reference
+var uModelMatrix;			//connectoer to uniform uModelMatrix
+var uProjectMatrix;			//connector to uProjectMatrix
+var uViewMatrix;			//connector to uViewMatrix
+//variables determined by button
+var size = 5;	
+var openness = 0;
+var numEnemies = 2;
+var enemies = [];
+var timeStart;
+//user input
+var mouseY =300;
+var mouseX =300;
+var velocity = [0,0,0];
+var rotation =[0,0];
+var eye = vec3(0,0,0);
+var at = vec3(0,0,0);
+var up = vec3(0,1,0);
+var deltaV =[.01, 1];
+//stuff related to walls	
+var locations;
+var isColliding;
+var colliding =[];
+var collided =[];
+//previous values
+var previousRotation = [];	
+var previousEye;
+var previousShip =[];
+var previousAt;
+//ships location
+var shipLocation =[];	
+//current frame
+var count =0;
+//whether or not you beat the game
+var gameDone = false;	
+//main function
+function main()
+{
+    //set up webgl
+    canvas = document.getElementById("gl-canvas");
+    gl = WebGLUtils.setupWebGL(canvas);
+    
+    //set up shaders
+    var program = initShaders(gl, "vertex-shader","fragment-shader");
+    gl.useProgram(program);
+	//set up vertex and color arrays
+	var vertices =[];
+	var colors =[];
+	makeGreenCube(vertices, colors);
+	makeRedCube(vertices, colors);
+	makeWireCube(vertices, colors);
+	makeGreyTetrad(vertices, colors);
+	makeBlueTetrad(vertices, colors);
+	makeWireTetrad(vertices,colors);
+    //create vertex buffer and bind it
+    var vertexBuffer = gl.createBuffer();
+    gl.bindBuffer(gl.ARRAY_BUFFER, vertexBuffer);
+
+    //connect vertex bufffer to attribute variable aPosition
+    var aPosition = gl.getAttribLocation(program, "aPosition");
+    gl.vertexAttribPointer(aPosition, 3, gl.FLOAT, false, 0, 0);
+    gl.enableVertexAttribArray(aPosition);
+	gl.bufferData(gl.ARRAY_BUFFER,flatten(vertices), gl.STATIC_DRAW);
+	//create color buffer and bind it
+	var colorBuffer = gl.createBuffer();
+	gl.bindBuffer(gl.ARRAY_BUFFER,colorBuffer);
+	//connect color buffer to the attribute aColor
+	var aColor = gl.getAttribLocation(program,"aColor")
+	gl.vertexAttribPointer(aColor,3,gl.FLOAT, false,0,0);
+	gl.enableVertexAttribArray(aColor);
+	gl.bufferData(gl.ARRAY_BUFFER,flatten(colors), gl.STATIC_DRAW);
+	//connects values to the view matrices
+	uViewMatrix = gl.getUniformLocation(program,"uViewMatrix");
+	uProjectMatrix = gl.getUniformLocation(program,"uProjectMatrix");
+	//connects the model matrix
+	uModelMatrix = gl.getUniformLocation(program, "uModelMatrix");
+	//canvas color is black
+    gl.clearColor(0.0, 0.0, 0.0, 1.0);
+	//makes the maze
+	locations =[];
+	makeMaze(size, locations);
+	//places the enemies
+	placeEnemies(size, locations, enemies, numEnemies);
+	//some more cleanup
+	gl.viewport(0,0,canvas.width,canvas.height);
+	gl.enable(gl.DEPTH_TEST);
+	//draw function
+	draw();
+	
+}
+//victory screen method, shows that you one and how long it took
+function victoryScreen(){
+	alert("you won! you left the maze after: " + (new Date().getTime() - timeStart)/1000 +" seconds.");
+}
+//draw function
+function draw()
+{
+	//clears buffer
+	gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT)
+	//set previous values
+	previousRotation[0] = rotation[0];
+	previousRotation[1] = rotation[1];
+	previousEye = vec3(flatten(eye)[0],flatten(eye)[1],flatten(eye)[2]);
+	previousAt = vec3(flatten(at)[0],flatten(at)[1],flatten(at)[2])
+	//get Rotation based on mouse
+	rotation[0] = Math.pow(.5- 1*mouseY/canvas.height , 3)  +rotation[0];
+	rotation[1] = Math.pow(-1*mouseX/canvas.width +.5 , 3) +rotation[1];
+	if(Math.cos(rotation[0])<0){
+		rotation[0] = previousRotation[0]; //can't move past up or down
+	}
+	//get Velocity
+	velocity[0] = Math.cos(rotation[0])*deltaV[0] *Math.sin(rotation[1])*deltaV[1];
+	velocity[1] = Math.sin(rotation[0])*deltaV[0];
+	velocity[2] = Math.cos(rotation[0])*deltaV[0] *Math.cos(rotation[1])*deltaV[1];
+	deltaV[1] = deltaV[1];
+
+	//change location of at and eye
+	var matrix;
+	var eyeLocation = [flatten(eye)[0], flatten(eye)[1], flatten(eye)[2]];
+	var atLocation =[];
+	atLocation[0] = Math.cos(rotation[0])*Math.sin(rotation[1]) + eyeLocation[0];
+	atLocation[1] = Math.sin(rotation[0]) + eyeLocation[1];
+	atLocation[2] = Math.cos(rotation[0])*Math.cos(rotation[1]) + eyeLocation[2];
+	//set at and eye vectors
+	at = vec3(atLocation[0], atLocation[1] , atLocation[2]);
+	eye = vec3(eyeLocation[0] + velocity[0], eyeLocation[1] + velocity[1],eyeLocation[2] + velocity[2]);
+	//update Matrices
+	var matrix1 = lookat(eye,at,up);
+	gl.uniformMatrix4fv(uViewMatrix, false, flatten(matrix1));
+	var matrix2 = perspective(40,1,1, 40);
+	gl.uniformMatrix4fv(uProjectMatrix, false, flatten(matrix2));
+	shipLocation = [3*(atLocation[0] -eyeLocation[0])/2 + eyeLocation[0], 3*(atLocation[1] -eyeLocation[1])/2+ eyeLocation[1] -.3, 3*(atLocation[2] -eyeLocation[2])/2+ eyeLocation[2]];
+	//check if colliding
+	if(isColliding){
+		if(Math.abs(shipLocation[0] - colliding[0])<2.15 && Math.abs(shipLocation[1] - colliding[1])<2.025 && Math.abs(shipLocation[2] - colliding[2])<2.15)
+		{
+			//if colliding move the ship back to a space where not colliding
+			previousShip=[];
+			if(Math.abs(colliding[0] - shipLocation[0])>= Math.abs(colliding[1] - shipLocation[1]) && Math.abs(colliding[0] - shipLocation[0])> Math.abs(colliding[2] - shipLocation[2])){
+				if(colliding[0] - shipLocation[0]>0)
+					previousShip = [(colliding[0] - shipLocation[0]) - 2.15,0,0];
+				else
+					previousShip = [(colliding[0] - shipLocation[0]) + 2.15,0,0];
+			}
+			else if(Math.abs(colliding[1] - shipLocation[1])>= Math.abs(colliding[2] - shipLocation[2])){
+				if(colliding[1] - shipLocation[1]>0)
+					previousShip = [0,(colliding[1] - shipLocation[1]) - 2.025,0];
+				else
+					previousShip = [0,(colliding[1] - shipLocation[1]) + 2.025,0];
+			}
+			else{
+				if(colliding[2] - shipLocation[2]>0)
+					previousShip = [0,0,(colliding[2] - shipLocation[2]) - 2.15];
+				else
+					previousShip = [0,0,(colliding[2] - shipLocation[2]) + 2.15];
+			}
+			at = vec3(flatten(previousAt)[0]+previousShip[0]- velocity[0],flatten(previousAt)[1]+previousShip[1]-velocity[1],flatten(previousAt)[2]+previousShip[2]-velocity[2]);
+			eye = vec3(flatten(previousEye)[0]+previousShip[0] - velocity[0],flatten(previousEye)[1]+previousShip[1]-velocity[1],flatten(previousEye)[2]+previousShip[2]-velocity[2]);
+			//shipLocation = [shipLocation[0] + previousShip[0],shipLocation[1] + previousShip[1],shipLocation[2] + previousShip[2]]
+		}
+	}
+	//rotate, scale, and move ship
+	var m1 =rotatey((rotation[1]*180/Math.PI -90));
+	var m2 =rotatex((rotation[1]-previousRotation[1])*-1000 );
+	var m3 =rotatez(((rotation[0]-previousRotation[0])*1000 + Math.sin(rotation[0])*90));
+	var m4 =scaling(.15,.025,.15);
+	var m5 =translate(shipLocation[0], shipLocation[1], shipLocation[2]);
+	var matrix = multiply(m5, multiply(m1, multiply(m3,multiply(m2,m4))));
+	//draw ship
+	gl.uniformMatrix4fv(uModelMatrix, false, flatten(matrix));
+	gl.drawArrays(gl.TRIANGLES,96,12);
+	gl.drawArrays(gl.LINES,120,12);
+	//set collision to false
+	isColliding = false;
+	//go through all wall locations
+	for(var loc of locations){
+		
+		//get the location of the cube
+		var cubeLocation =[(loc[0] - (size-1)/2)*4, (loc[1] - (size-1)/2)*4, (loc[2] - (size-1)/2)*4];
+		//check if it is within a certain distance
+		if(Math.abs(shipLocation[0]-cubeLocation[0]) <25 && Math.abs(eyeLocation[1]-cubeLocation[1]) <25 &&Math.abs(shipLocation[2]-cubeLocation[2]) <25 ){
+			//move and draw the cube
+			m1 = scaling(2,2,2);
+			m2 = translate(cubeLocation[0], cubeLocation[1], cubeLocation[2]);
+			m3 =multiply(m2,m1);
+			gl.uniformMatrix4fv(uModelMatrix, false, flatten(m3));
+
+		//check if you have collided with a cube
+			if(Math.abs(shipLocation[0] - cubeLocation[0])<2.15 && Math.abs(shipLocation[1] - cubeLocation[1])<2.025&& Math.abs(shipLocation[2] - cubeLocation[2])<2.15){
+				isColliding = true;
+				colliding = cubeLocation;
+				addCollided(collided,cubeLocation);
+			}
+			//if you have collided with this cube
+			if(checkCollided(collided,cubeLocation))
+				gl.drawArrays(gl.TRIANGLES,36,36); //it is red
+			else
+				gl.drawArrays(gl.TRIANGLES, 0, 36) //otherwise it is green
+			gl.drawArrays(gl.LINES,72,24); //lines for better depth perception
+		}
+		count++;
+		for(i = 0; i<numEnemies && count %10 ==0; i++){
+			//gets a move of the enemy
+			var enemyLocation = moveEnemy(enemies[i], locations, shipLocation);
+			if(typeof enemyLocation=='undefined')
+				console.log(enemies[i]); //checks if there is a problem
+			//scales, rotates and draws the enemy
+			m1 = scaling(.5,.25,.5);
+			m2 = rotatey((enemyLocation[4]*180/Math.PI -90));
+		    m3 = rotatex(-Math.sin(enemyLocation[3])*90);
+			m4 = translate(enemyLocation[0], enemyLocation[1], enemyLocation[2])
+			matrix = multiply(m4,multiply(m3,multiply(m2,m1)));
+			//draw enemy at location
+			gl.uniformMatrix4fv(uModelMatrix, false, flatten(matrix));
+			gl.drawArrays(gl.TRIANGLES,108,12);
+			gl.drawArrays(gl.LINES,120,12);
+			//check for intersection
+			if(Math.abs(shipLocation[0] - enemyLocation[0])<0.5 && Math.abs(shipLocation[1] - enemyLocation[1])<0.25 && Math.abs(shipLocation[2] - enemyLocation[2])<0.5)
+				gameDone = true; //game over man
+			enemies[i] = enemyLocation; //assign location to be called again
+		}
+	}
+	if(gameDone)
+		 defeatScreen(); //show defeat screen
+	else if(Math.abs(shipLocation[0])<(size+2)*2&& 
+			Math.abs(shipLocation[1])<(size+2)*2&& 
+			Math.abs(shipLocation[2])<(size+2)*2)
+		requestAnimationFrame(draw);//call draw again
+	else
+		victoryScreen();//show game won upon leaving
+}
+//function that returns a vector for the enemy to move to
+function moveEnemy(loc, walls, ship)
+{	//check if out of bounds, return to origin(sometiems they escape)
+	if(Math.abs(loc[0]/4) >(size-1)/2 || 
+	   Math.abs(loc[1]/4) >(size-1)/2 ||
+	   Math.abs(loc[2]/4) >(size-1)/2)
+		return([0,0,0,0,0]);
+	//check if player is visible
+	else if(seesPlayer(loc,ship)){
+		return moveToward(loc, ship, .001); //move towards player
+	}
+	//otherwise check if ready for another patrol
+	else if(Math.abs(loc[0])%4 ==0 && 
+	   Math.abs(loc[1])%4 ==0 &&
+	   Math.abs(loc[2])%4 ==0){
+		var possibleMoves = [];
+		//goes through nearby squares
+		for(x=-1; x<2; x++){
+			for(y=-1; y<2; y++)
+				for(z=-1; z<2; z++)
+					if(((x!=0 && y==0 &&z ==0) ||
+						(y!=0 && x==0 &&z ==0) ||
+						(z!=0 && x==0 &&y ==0)) &&
+						!(Math.abs((loc[0]/4)+x) > (size-1)/2 ||
+						  Math.abs((loc[1]/4)+y) > (size-1)/2 ||
+						  Math.abs((loc[2]/4)+z) > (size-1)/2)){
+								//checks for walls
+								var canMove = true;
+								for(wall of walls)
+									if((wall[0] -(size-1)/2 == Math.round(x+loc[0]/4) && 
+									   wall[1] -(size-1)/2 == Math.round(y+loc[1]/4) &&
+									   wall[2] -(size-1)/2 == Math.round(z+loc[2]/4)))
+									    {
+											canMove = false;
+											break;											
+									}
+								if(canMove){ //add possible moves
+									possibleMoves.push(moveToward(loc,[x+loc[0],y+loc[1],z+loc[2]],.001));
+								}
+							
+					}
+		}
+		//return a random move (or none, they can wait)
+		if(possibleMoves.length>0)
+			return  possibleMoves[Math.floor(Math.random()*possibleMoves.length)];
+		else
+			return loc;
+	}
+	//move toward current direction if not ready for another patrol
+	else{
+		return moveToward(loc,[Math.round(Math.sin(loc[4])*Math.cos(loc[3]))+loc[0],Math.round(Math.sin(loc[3]))+loc[1], Math.round(Math.cos(loc[4])*Math.cos(loc[3]))+loc[2]],.001);
+	}
+}
+//checks if an enemy can see the player
+function seesPlayer(loc, ship)
+{
+	var player =[];
+	var computer = [];
+	//gets values rounded to the nearest four
+	player = [Math.round(ship[0]*.25)/.25,
+	Math.round(ship[1]*.25)/.25,
+	Math.round(ship[2]*.25)/.25];
+	computer =[Math.round(loc[0]*.25)/.25,
+	Math.round(loc[1]*.25)/.25,
+	Math.round(loc[2]*.25)/.25];
+	//if they are in the same spot, will evaluate as true
+	if(computer[0] == player[0] && 
+	   computer[1] == player[1] && 
+	   computer[2] == player[2])
+		return true;
+	//returns false;
+	return false;
+}
+//will move enemy towards a location at a distance
+function moveToward(current, goal, distance)
+{	
+	//gets rise/run
+	var rise = goal[1] - current[1];
+	var run = Math.pow(goal[2] - current[2],2) + 
+	          Math.pow(goal[0] - current[0],2);
+	//finds angles using the rise/run and arcsin
+	if(run != 0)
+		var rotate = [Math.asin(rise/Math.pow(rise*rise + run,.5)),
+					  Math.asin((goal[0] - current[0])/Math.pow(run,.5))];
+	else
+		var rotate = [Math.asin(rise/Math.pow(rise*rise + run,.5)),
+						0];
+	//creates an array based on z, because it was inversing for some reason
+	if(current[2] - goal[2] <0)
+		return [Math.round((Math.sin(rotate[1])*Math.cos(rotate[0])*distance + current[0])*1000)/1000,
+				Math.round((Math.sin(rotate[0])*distance + current[1])*1000)/1000,
+				Math.round((Math.cos(rotate[1])*Math.cos(rotate[0])*distance + current[2])*1000)/1000,
+				rotate[0], rotate[1]];
+	else
+		return [Math.round((Math.sin(rotate[1])*Math.cos(rotate[0])*distance + current[0])*1000)/1000,
+				Math.round((Math.sin(rotate[0])*distance + current[1])*1000)/1000,
+				Math.round((-Math.cos(rotate[1])*Math.cos(rotate[0])*distance + current[2])*1000)/1000,
+				rotate[0], rotate[1]];
+}
+//defeat alert
+function defeatScreen(){
+	alert("you lost! an enemy hit you after: " + (new Date().getTime() - timeStart)/1000 +" seconds.");
+}
+//adds a size 3 array, to another array if not already there
+function addCollided(arr, cube)
+{
+	//goes through current array
+	for(i=0; i< arr.length; i++)
+		if(arr[i][0] == cube[0] && arr[i][1] == cube[1] && arr[i][2] == cube[2])
+			return; //breaks and doesn't add a new value
+	//adds the value
+	arr.push(cube);
+}
+//check if a size 3 array is inside another array
+function checkCollided(arr, cube)
+{
+	for(i=0; i< arr.length; i++)
+		if(arr[i][0] == cube[0] && arr[i][1] == cube[1] && arr[i][2] == cube[2])
+			return true; //it is in the array
+	//it is not in the array
+	return false;
+}
+//place the enemies initially around the map
+function placeEnemies(size, locations, enemies, numEnemies){
+	var empties = []; //empty spaces
+	var add = true;
+	for(x = 0; x<size; x++)
+		for(y = 0; y<size; y++)
+			for(z = 0; z<size; z++){
+				add = true;
+				for(loc of locations){
+					//ignores walls
+					if(add &&(loc[0] == x  && loc[1] == y && loc[2] == z)){
+						add = false;
+						break;
+					}
+					//can't start at the same place as the player
+				if(add && (x!= (size-1)/2 || y!= (size-1)/2 || z!= (size-1)/2))
+					addCollided(empties, [(x- (size-1)/2)*4,(y- (size-1)/2)*4,(z- (size-1)/2)*4, 0, 0]);
+				}
+	}
+	//picks the spots for the enemies
+	for(i =0; i<numEnemies; i++){
+		enemies[i] = empties[Math.floor(Math.random()*empties.length)];
+	}
+}
+//hardcodes a green cube for the walls
+function makeGreenCube(vertexArray, colorArray)
+{
+	//8 vertices in the array/cube
+	var v1 = vec3(-1,1,1),  v2 = vec3(1,1,1),
+		v3 = vec3(1,-1,1),  v4 = vec3(-1,-1,1),
+		v5 = vec3(-1,1,-1),  v6 = vec3(1,1,-1),
+		v7 = vec3(1,-1,-1),  v8 = vec3(-1,-1,-1);
+	//pushing them to make the 6 faces
+	vertexArray.push(v1,v2,v3,v1,v3,v4,
+					 v1,v5,v6,v1,v6,v2,
+					 v2,v6,v7,v2,v7,v3,
+					 v5,v6,v7,v5,v7,v8,
+					 v4,v8,v7,v4,v7,v3,
+					 v1,v5,v8,v1,v8,v4);
+	//color are all shades of green
+	var green1 = vec3(.2,.4,.2); var green2 = vec3(.3,.5,.3); var green3 = vec3(.4,.6,.4);
+	var green4 = vec3(.5,.7,.5); var green5 = vec3(.6,.8,.6); var green6 = vec3(.7,.9,.7);
+	//push shades of green to color array
+	colorArray.push(green1, green1, green1, green1, green1, green1,
+					green2, green2, green2, green2, green2, green2,
+					green3, green3, green3, green3, green3, green3,
+					green4, green4, green4, green4, green4, green4,
+					green5, green5, green5, green5, green5, green5,
+					green6, green6, green6, green6, green6, green6);
+}
+//hardcodes a red cube for collided walls
+function makeRedCube(vertexArray, colorArray)
+{   //8 vertices in the array/cube
+	var v1 = vec3(-1,1,1),  v2 = vec3(1,1,1),
+		v3 = vec3(1,-1,1),  v4 = vec3(-1,-1,1),
+		v5 = vec3(-1,1,-1),  v6 = vec3(1,1,-1),
+		v7 = vec3(1,-1,-1),  v8 = vec3(-1,-1,-1);
+	//pushing them to make the 6 faces
+	vertexArray.push(v1,v2,v3,v1,v3,v4,
+					 v1,v5,v6,v1,v6,v2,
+					 v2,v6,v7,v2,v7,v3,
+					 v5,v6,v7,v5,v7,v8,
+					 v4,v8,v7,v4,v7,v3,
+					 v1,v5,v8,v1,v8,v4);
+	//color are all shades of red
+	var red1 = vec3(.4,.2,.2); var red2 = vec3(.5,.3,.3); var red3 = vec3(.6,.4,.4);
+	var red4 = vec3(.7,.5,.5); var red5 = vec3(.8,.6,.6); var red6 = vec3(.9,.7,.7);
+	//push shades of red to color array
+	colorArray.push(red1, red1, red1, red1, red1, red1,
+					red2, red2, red2, red2, red2, red2,
+					red3, red3, red3, red3, red3, red3,
+					red4, red4, red4, red4, red4, red4,
+					red5, red5, red5, red5, red5, red5,
+					red6, red6, red6, red6, red6, red6);
+}
+//makes a black wire cube for depth perception
+function makeWireCube(vertexArray, colorArray)
+{	//the 8 vertices of the cube
+	var v1 = vec3(-1,1,1),  v2 = vec3(1,1,1),
+		v3 = vec3(1,-1,1),  v4 = vec3(-1,-1,1),
+		v5 = vec3(-1,1,-1),  v6 = vec3(1,1,-1),
+		v7 = vec3(1,-1,-1),  v8 = vec3(-1,-1,-1);
+	//the 24 vertices needed for the wire cube
+	vertexArray.push(v1,v2,v2,v3,v3,v4,
+					 v4,v1,v5,v6,v6,v7,
+					 v7,v8,v8,v5,v1,v5,
+					 v2,v6,v3,v7,v4,v8);
+	var black = vec3(0,0,0);
+	//adds 12 black vertices
+	colorArray.push(black, black, black, black, black, black,
+					black, black, black, black, black, black,
+					black, black, black, black, black, black,
+					black, black, black, black, black, black);
+}
+//makes the enemy ship
+function makeBlueTetrad(vertexArr, colorArr)
+{
+	//only 4 vertices
+	var v1 = vec3(-1, -1, 1), v2 = vec3(-1, -1, -1),
+		v3 = vec3(1, -1, 0), v4 = vec3(-1,1, 0);
+	//pushes them into the 12 for he shaded tetrad
+	vertexArr.push(v1, v2, v3,
+				   v1, v3, v4,
+				   v1, v2, v4,
+				   v2, v3, v4);
+	var blue = vec3(0,0,.6);
+	//colors are blue
+	colorArr.push(blue, blue, blue,
+				  blue, blue, blue,
+				  blue, blue, blue,
+				  blue, blue, blue);
+}
+//the player is a multishaded tetrad
+function makeGreyTetrad(vertexArr, colorArr)
+{	//the unit tetrad
+	var v1 = vec3(-1, -1, 1), v2 = vec3(-1, -1, -1),
+		v3 = vec3(1, -1, 0), v4 = vec3(-1,1, 0);
+	//pushes them to make a tetrad when triangles are called
+	vertexArr.push(v1, v2, v3,
+				   v1, v3, v4,
+				   v1, v2, v4,
+				   v2, v3, v4);
+	//various colors
+	var bottom = vec3(.55,.55,.55);
+	var right = vec3(.75,.75,.75);
+	var back = vec3(.5,.5,.5);
+	var left = vec3(.25,.25,.25);
+	//pushes them in the color array
+	colorArr.push(bottom, bottom, bottom,
+				  back, back, back,
+				  right, right, right,
+				  left, left, left);
+}
+// a wire tetrad for cleaner definition
+function makeWireTetrad(vertexArr, colorArr)
+{	//the tetrad vertices
+	var v1 = vec3(-1, -1, 1), v2 = vec3(-1, -1, -1),
+		v3 = vec3(1, -1, 0), v4 = vec3(-1,1, 0);
+	//the vertices pushed on
+	vertexArr.push(v1, v2, v2, 
+				   v3, v1, v3,
+				   v3, v4, v1,
+				   v4, v4, v2);
+	var black  = vec3(0,0,0);
+	//color is black
+	colorArr.push(black, black, black,
+				  black, black, black,
+				  black, black, black,
+				  black, black, black);
+}
+
+
+//makes the maze
+function makeMaze(size, locations)
+{	//wall variables
+	var wallsTemp;
+	var wallsPerm = initiate(size, wallsPerm);
+	//current pathd
+    var path = [];
+	path.push([(size-1)/2,(size-1)/2,(size-1)/2]);
+	//uses prims algorithm to make a maze
+	var lowest;
+	do {
+		//gets available paths
+		visitAdjacents(path[path.length-1], wallsPerm,size)	
+		lowest = null;
+		pathIndex = 0; 
+		//removes a wall, and turns it into a path
+		for(var i of path){
+			wallsTemp = populateWalls(i, wallsPerm)
+			for(var wall of wallsTemp){
+				if(lowest==null)
+					lowest = wall;
+				else if(wall.weight < lowest.weight){
+					lowest = wall;
+					}
+			}
+		}
+		if(lowest!=null){
+			path.push([lowest.location[0],lowest.location[1],lowest.location[2]]);
+		}
+	}//do this until wall has 2 adjacent spaces
+	while(lowest!=null);
+	//get an escape location and add the ends to the maze
+	var escape = [];
+	for(x=-1; x<size+1; x++){
+		for(y=-1; y<size+1; y++){
+			for(z=-1; z<size+1; z++){
+				if(x==-1 && wallsPerm[0][y][z] == null){
+						escape.push([x,y,z]);
+				}
+				else if(x==size && wallsPerm[size-1][y][z] == null){
+					escape.push([x,y,z]);	
+				}
+				else if(y==-1 && wallsPerm[x][0][z] == null){
+					escape.push([x,y,z]);
+				}
+				else if(y==size && wallsPerm[x][size-1][z] == null){
+					escape.push([x,y,z]);	
+				}
+				else if(z==-1 && wallsPerm[x][y][0] == null){
+					escape.push([x,y,z]);
+				}
+				else if(z==size && wallsPerm[x][y][size-1] == null){
+					escape.push([x,y,z]);	
+				}
+				else if(wallsPerm[x][y][z]!=null ){
+					locations.push([x,y,z]);
+				}
+			}
+		}
+	}
+	//skips the escape route, but makes the remaining squares
+	var skip = Math.floor(Math.random()*escape.length);
+	for(val in escape)
+		if(val!=skip){
+			locations.push([escape[val][0],escape[val][1],escape[val][2]]);
+		}
+}
+//a wall object
+function wall(x,y,z,w){
+	this.location = [x,y,z];
+	this.weight =w;
+	this.visited =0;
+}
+//initiates the maze with walls
+function initiate(size, arr)
+{
+	//makes size^3 amount of walls
+	arr = new Array(size);
+	for(i =-1; i< size+1; i++){
+		arr[i] = new Array(size);
+		for(j=-1; j< size+1; j++){
+			arr[i][j] = new Array(size);
+			for(k =-1; k< size+1; k++){
+				arr[i][j][k] = new wall(i,j,k, Math.random()); //wall is given a random weight
+			}
+		}
+	}
+	return arr; //return the walls
+}
+//gets a temporary list of walls based on the path
+function populateWalls(path, walls)
+{
+	var arr =[];
+	for(x=-1; x<2; x++){
+		for(y=-1; y<2; y++){
+			for(z=-1; z<2; z++){
+				if(checkLocation(x,y,z,path,size)&& 
+				walls[x+path[0]][y+path[1]][z+path[2]]!= null){
+					if(walls[x+path[0]][y+path[1]][z+path[2]].visited<2)
+						arr.push(walls[x+path[0]][y+path[1]][z+path[2]]); //skips over perm walls
+					else if(Math.random()<openness)//unless one wants and easier maze
+						arr.push(walls[x+path[0]][y+path[1]][z+path[2]]);
+				}
+			}
+		}
+	}
+	return arr; //return the temporary walls
+
+}
+//check location if it is within the maze, and only one cardinal unit away
+function checkLocation(x,y,z,arr,size){
+	if(x +arr[0]< size && x+arr[0] >= 0 && 
+	   y +arr[1]< size && y+arr[1] >= 0 &&
+	   z +arr[2]< size && z+arr[2] >= 0 &&
+	   ((Math.abs(x)==1 && y==0 && z==0)|| 
+	    (Math.abs(y)==1 && x==0 && z==0)||
+		(Math.abs(z)==1 && y==0 && x==0)))
+		return true; //return true
+	else
+		return false;//otherwise false
+}
+//visit every nearby walls
+function visitAdjacents(path, walls,size){
+	walls[path[0]][path[1]][path[2]] = null;
+	for(x=-1; x<2; x++){
+		for(y=-1; y<2; y++){
+			for(z=-1; z<2; z++){
+				//check if in the maze and a wall is present
+				if(checkLocation(x,y,z,path,size) && walls[x+path[0]][y+path[1]][z+path[2]]!= null){
+					//increments visited on the wall object at location
+					walls[x+path[0]][y+path[1]][z+path[2]].visited = walls[x+path[0]][y+path[1]][z+path[2]].visited +1;
+					}
+			}
+		}
+	}
+}
+//checks if w or s is pressed down
+window.onkeydown = function(event)
+{
+  //if so, will increase or deacrease speed
+  var key = event.keyCode;          //get key
+  if (key == 87){                  //w
+		deltaV[0] = Math.min(deltaV[0]+.01, .07);
+	}
+  else if (key == 83){                  //s
+		deltaV[0] = Math.max(deltaV[0]-.01, .01);
+	}
+};
+
+</script>
+
+</head>
+
+<!-- canvas for drawing scene -->
+<canvas id="gl-canvas" width="600" height="600"></canvas>
+<script>
+document.getElementById("gl-canvas").onmousemove = function(event)
+{
+	//get the mouse coordinates
+	mouseX = event.clientX;
+	mouseY = event.clientY;
+}
+</script>
+<p>
+<!-- inputs used for start of maze -->
+enemies 0 <input id="enemies" type="range" min="0" max="3" step="1" value="0"> 3
+open-ness 0<input id="openness" type="range" min="0" max="0.007" step="0.00001" value="0"> 0.007
+size 5<input id="size" type="range" min="5" max="15" step="2" value="0"> 15
+<button id="play">Play</button>
+</p>
+<script>
+document.getElementById("play").onclick  = function(){
+		//gets current info on sliders and begins the maze
+		numEnemies = parseFloat(document.getElementById("enemies").value);
+		size = parseFloat(document.getElementById("size").value);
+		openness = parseFloat(document.getElementById("openness").value);
+		timeStart = new Date().getTime();
+		main();
+}
+</script>
+
+</body>
+
+</html>
